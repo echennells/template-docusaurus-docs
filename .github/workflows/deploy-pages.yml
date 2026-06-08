@@ -1,0 +1,62 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      # `npm install` rather than `npm ci` because new sites forked from
+      # this template don't have a committed package-lock.json yet. Once
+      # you've run npm install locally and committed the lockfile, you
+      # can swap this back to `npm ci` for faster, reproducible builds.
+      - run: npm install
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # The very first push to a brand-new repo (the template's auto-
+      # "Initial commit") fires this workflow before the owner has had
+      # a chance to flip Pages on. Rather than fail loudly with red
+      # X's in the Actions history, detect that state and skip the
+      # deploy step. The first real push *after* Pages is enabled will
+      # deploy as normal.
+      - name: Check Pages config
+        id: check
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if BUILD_TYPE=$(gh api /repos/${{ github.repository }}/pages -q .build_type 2>/dev/null) && [ "$BUILD_TYPE" = "workflow" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Pages not configured yet::Enable GitHub Pages in Settings → Pages (Source: \"GitHub Actions\") and re-run this workflow. Until then the deploy step is skipped, not failed."
+          fi
+      - id: deployment
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/deploy-pages@v4
